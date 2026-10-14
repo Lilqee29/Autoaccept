@@ -1,0 +1,90 @@
+{
+  "name": "antigravity-autoaccept",
+  "displayName": "AntiGravity AutoAccept",
+  "description": "Automatically accept agent steps, terminal commands, and tool approvals with custom command exemptions and status bar controls.",
+  "version": "1.0.0",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other",
+    "Automation"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "antigravityAutoAccept.toggle",
+        "title": "AutoAccept: Toggle ON / OFF"
+      },
+      {
+        "command": "antigravityAutoAccept.addExemptCommand",
+        "title": "AutoAccept: Add Exempt Command Pattern"
+      },
+      {
+        "command": "antigravityAutoAccept.openSettings",
+        "title": "AutoAccept: Open Configuration Settings"
+      },
+      {
+        "command": "antigravityAutoAccept.status",
+        "title": "AutoAccept: Show Status"
+      }
+    ],
+    "configuration": {
+      "title": "AntiGravity AutoAccept",
+      "properties": {
+        "antigravityAutoAccept.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable or disable automatic prompt and command approvals."
+        },
+        "antigravityAutoAccept.cdpPort": {
+          "type": "number",
+          "default": 9333,
+          "description": "Port number for Chrome DevTools Protocol (CDP)."
+        },
+        "antigravityAutoAccept.exemptCommands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "rm -rf",
+            "del /f",
+            "git push",
+            "npm publish",
+            "format",
+            "drop database"
+          ],
+          "description": "List of command keywords or patterns to exempt from auto-accept (requires manual user approval)."
+        },
+        "antigravityAutoAccept.allowedKeywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "run",
+            "accept",
+            "always allow",
+            "allow",
+            "proceed",
+            "continue",
+            "confirm",
+            "execute"
+          ],
+          "description": "Button labels that should be automatically accepted."
+        },
+        "antigravityAutoAccept.pollIntervalMs": {
+          "type": "number",
+          "default": 2000,
+          "description": "Interval in milliseconds to discover new agent conversation windows."
+        }
+      }
+    }
+  }
+}
