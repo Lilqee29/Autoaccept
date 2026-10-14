@@ -50,17 +50,55 @@ function buildInjectionScript(config) {
   return `(() => {
     window.__antigravityConfig = ${JSON.stringify(config)};
     
+    // Create/update in-app floating badge
+    let badge = document.getElementById("antigravity-autoaccept-badge");
+    if (!badge) {
+      badge = document.createElement("div");
+      badge.id = "antigravity-autoaccept-badge";
+      badge.style.position = "fixed";
+      badge.style.bottom = "16px";
+      badge.style.right = "16px";
+      badge.style.zIndex = "999999";
+      badge.style.padding = "6px 12px";
+      badge.style.borderRadius = "20px";
+      badge.style.backgroundColor = "rgba(16, 185, 129, 0.95)";
+      badge.style.color = "#ffffff";
+      badge.style.fontFamily = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+      badge.style.fontSize = "12px";
+      badge.style.fontWeight = "600";
+      badge.style.boxShadow = "0 4px 12px rgba(0, 0, 0, 0.25)";
+      badge.style.cursor = "pointer";
+      badge.style.userSelect = "none";
+      badge.style.display = "flex";
+      badge.style.alignItems = "center";
+      badge.style.gap = "6px";
+      badge.style.transition = "all 0.2s ease";
+      badge.innerHTML = "<span>⚡</span> <span>AutoAccept: ON</span>";
+
+      badge.onclick = (e) => {
+        e.stopPropagation();
+        window.__antigravityConfig.enabled = !window.__antigravityConfig.enabled;
+        if (window.__antigravityConfig.enabled) {
+          badge.style.backgroundColor = "rgba(16, 185, 129, 0.95)";
+          badge.innerHTML = "<span>⚡</span> <span>AutoAccept: ON</span>";
+        } else {
+          badge.style.backgroundColor = "rgba(239, 68, 68, 0.95)";
+          badge.innerHTML = "<span>⏸️</span> <span>AutoAccept: PAUSED</span>";
+        }
+      };
+
+      document.body.appendChild(badge);
+    }
+
     if (window.__antigravityAutoAcceptInstalled) {
       return "Config updated";
     }
     window.__antigravityAutoAcceptInstalled = true;
 
     function findAssociatedCommand(button) {
-      // Traverse up to find container (card, step, dialog, code snippet)
       let current = button;
       let depth = 0;
       while (current && depth < 8 && current !== document.body) {
-        // Look for code blocks, pre tags, terminal lines, or commands in parent container
         const codeEls = current.querySelectorAll('code, pre, .terminal, .command-line, .code-snippet, [data-command]');
         for (const el of codeEls) {
           const text = (el.innerText || el.textContent || "").trim();
@@ -99,7 +137,6 @@ function buildInjectionScript(config) {
         });
 
         if (isMatch) {
-          // Check for exempt command if this is a command proposal button
           const associatedCmd = findAssociatedCommand(btn);
           if (associatedCmd && isCommandExempt(associatedCmd, cfg.exemptCommands)) {
             btn.dataset.exempted = "true";
@@ -107,7 +144,6 @@ function buildInjectionScript(config) {
             return;
           }
 
-          // Safe to auto-accept
           btn.dataset.autoAccepted = "true";
           console.log("[AutoAccept Executed] Auto-accepted button:", text);
 
@@ -160,7 +196,7 @@ function attachTarget(target, config) {
   try {
     const ws = new WebSocket(webSocketDebuggerUrl);
 
-    ws.on('open', () => {
+    ws.addEventListener('open', () => {
       outputChannel.appendLine(`[Attached] Target [${id.slice(0, 8)}] (${title || url || 'Workbench'})`);
       updateStatusBar(config.enabled, activeSockets.size + 1);
 
@@ -180,9 +216,9 @@ function attachTarget(target, config) {
       }));
     });
 
-    ws.on('message', (data) => {
+    ws.addEventListener('message', (event) => {
       try {
-        const msg = JSON.parse(data.toString());
+        const msg = JSON.parse(event.data);
         if (msg.method === "Runtime.consoleAPICalled") {
           const logText = msg.params.args?.map(a => a.value || '').join(' ');
           if (logText.includes("[AutoAccept Exemption]")) {
@@ -196,12 +232,12 @@ function attachTarget(target, config) {
       } catch {}
     });
 
-    ws.on('close', () => {
+    ws.addEventListener('close', () => {
       activeSockets.delete(id);
       updateStatusBar(config.enabled, activeSockets.size);
     });
 
-    ws.on('error', () => {
+    ws.addEventListener('error', () => {
       activeSockets.delete(id);
       updateStatusBar(config.enabled, activeSockets.size);
     });
