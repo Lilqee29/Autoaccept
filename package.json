@@ -1,90 +1,43 @@
 {
-  "name": "antigravity-autoaccept",
-  "displayName": "AntiGravity AutoAccept",
-  "description": "Automatically accept agent steps, terminal commands, and tool approvals with custom command exemptions and status bar controls.",
+  "name": "gravity-autopilot",
+  "displayName": "Gravity Autopilot (Free)",
+  "description": "Free, open-source auto-accept for Antigravity: native commands + CDP button clicking, command blocklist/allowlist, optional Swarm mode. No license key, no telemetry.",
   "version": "1.0.0",
   "publisher": "local",
-  "engines": {
-    "vscode": "^1.80.0"
-  },
-  "categories": [
-    "Other",
-    "Automation"
-  ],
-  "activationEvents": [
-    "onStartupFinished"
-  ],
-  "main": "./extension.js",
+  "license": "MIT",
+  "engines": { "vscode": "^1.68.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./src/extension.js",
   "contributes": {
     "commands": [
-      {
-        "command": "antigravityAutoAccept.toggle",
-        "title": "AutoAccept: Toggle ON / OFF"
-      },
-      {
-        "command": "antigravityAutoAccept.addExemptCommand",
-        "title": "AutoAccept: Add Exempt Command Pattern"
-      },
-      {
-        "command": "antigravityAutoAccept.openSettings",
-        "title": "AutoAccept: Open Configuration Settings"
-      },
-      {
-        "command": "antigravityAutoAccept.status",
-        "title": "AutoAccept: Show Status"
-      }
+      { "command": "gravityAutopilot.toggle", "title": "Gravity Autopilot: Toggle ON/OFF" },
+      { "command": "gravityAutopilot.toggleSwarm", "title": "Gravity Autopilot: Toggle Swarm Mode" },
+      { "command": "gravityAutopilot.setup", "title": "Gravity Autopilot: Show Launch Setup (CDP port)" }
+    ],
+    "keybindings": [
+      { "command": "gravityAutopilot.toggle", "key": "ctrl+alt+a", "mac": "cmd+alt+a" }
     ],
     "configuration": {
-      "title": "AntiGravity AutoAccept",
+      "title": "Gravity Autopilot",
       "properties": {
-        "antigravityAutoAccept.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable or disable automatic prompt and command approvals."
+        "gravityAutopilot.enabled": { "type": "boolean", "default": true, "description": "Master switch." },
+        "gravityAutopilot.cdpPort": { "type": "number", "default": 9333, "description": "Remote-debugging port Antigravity was launched with (--remote-debugging-port)." },
+        "gravityAutopilot.pollIntervalMs": { "type": "number", "default": 600, "minimum": 200, "description": "How often native accept commands are fired." },
+        "gravityAutopilot.autoAcceptFileEdits": { "type": "boolean", "default": true, "description": "Auto-accept file edits. Turn off to review diffs yourself." },
+        "gravityAutopilot.autoRetry": { "type": "boolean", "default": true, "description": "Click Retry / Continue when the agent errors or hits a step limit." },
+        "gravityAutopilot.extraButtonTexts": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Extra button labels to click (e.g. translations: 'toujours autoriser')." },
+        "gravityAutopilot.blockedCommands": {
+          "type": "array", "items": { "type": "string" },
+          "default": ["rm -rf", "sudo ", "git push --force", "git push -f", "git reset --hard", "drop table", "drop database", "mkfs", "dd if=", "format c:", "del /s", "curl | sh", "curl | bash", "chmod -R 777"],
+          "description": "Terminal commands containing any of these (case-insensitive) are NEVER auto-run. Blocklist beats allowlist."
         },
-        "antigravityAutoAccept.cdpPort": {
-          "type": "number",
-          "default": 9333,
-          "description": "Port number for Chrome DevTools Protocol (CDP)."
-        },
-        "antigravityAutoAccept.exemptCommands": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "default": [
-            "rm -rf",
-            "del /f",
-            "git push",
-            "npm publish",
-            "format",
-            "drop database"
-          ],
-          "description": "List of command keywords or patterns to exempt from auto-accept (requires manual user approval)."
-        },
-        "antigravityAutoAccept.allowedKeywords": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "default": [
-            "run",
-            "accept",
-            "always allow",
-            "allow",
-            "proceed",
-            "continue",
-            "confirm",
-            "execute"
-          ],
-          "description": "Button labels that should be automatically accepted."
-        },
-        "antigravityAutoAccept.pollIntervalMs": {
-          "type": "number",
-          "default": 2000,
-          "description": "Interval in milliseconds to discover new agent conversation windows."
-        }
+        "gravityAutopilot.allowedCommands": { "type": "array", "items": { "type": "string" }, "default": [], "description": "If non-empty, ONLY commands containing one of these are auto-run." },
+        "gravityAutopilot.swarm.enabled": { "type": "boolean", "default": false, "description": "Best-effort: when you are idle, open other Agent Manager conversations that are waiting for approval so they get unblocked." },
+        "gravityAutopilot.swarm.idleSeconds": { "type": "number", "default": 20, "minimum": 5, "maximum": 300, "description": "Seconds of inactivity before Swarm may switch conversations (prevents stealing focus while you type)." }
       }
     }
-  }
+  },
+  "dependencies": { "ws": "^8.18.0" },
+  "scripts": { "test": "node test/filter.test.js", "package": "npx -y @vscode/vsce package --allow-missing-repository" }
 }
