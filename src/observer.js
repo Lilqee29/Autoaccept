@@ -46,6 +46,39 @@ function observer(cfg, commandAllowed) {
 
   function scan(root) {
     if (S.paused) return false;
+
+    // Handle Antigravity Permission Modal Dialogs ("Yes, allow this time" + "Submit")
+    var docText = (root.body ? root.body.innerText : (root.textContent || '')).toLowerCase();
+    if (docText.indexOf('yes, allow') !== -1 || docText.indexOf('confirm the command is safe') !== -1) {
+      var submitBtn = null;
+      var allowOption = null;
+      var candidates = root.querySelectorAll('button, [role="button"], div');
+      for (var k = 0; k < candidates.length; k++) {
+        var cEl = candidates[k];
+        var cText = (cEl.innerText || cEl.textContent || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+        if (!allowOption && (cText.indexOf('yes, allow this time') !== -1 || cText.indexOf('yes, and always allow') !== -1)) {
+          allowOption = cEl;
+        }
+        if (cText === 'submit' || cText.indexOf('submit') === 0) {
+          submitBtn = cEl;
+        }
+      }
+      if (submitBtn) {
+        var lastS = cooldown.get(submitBtn) || 0;
+        if (Date.now() - lastS > 1500) {
+          cooldown.set(submitBtn, Date.now());
+          if (allowOption) {
+            try { allowOption.click(); } catch(e){}
+          }
+          console.log('[GA] Auto-clicking permission Submit button');
+          S.clicks++;
+          submitBtn.focus();
+          submitBtn.click();
+          return true;
+        }
+      }
+    }
+
     var nodes = root.querySelectorAll('button, [role="button"], a[role="button"], [class*="btn"], [class*="button"]');
     for (var i = 0; i < nodes.length; i++) {
       var el = nodes[i];

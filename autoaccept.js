@@ -11,8 +11,8 @@ console.log(`[AutoAccept] Antigravity must be running with: --remote-debugging-p
 const activeSockets = new Map(); // targetId -> WebSocket
 
 const ACCEPT_KEYWORDS = [
-  'run', 'accept', 'always allow', 'allow', 'proceed',
-  'continue', 'confirm', 'execute', 'allow this conversation'
+  'always allow', 'allow once', 'allow this conversation', 'allow',
+  'run', 'accept all', 'accept', 'retry', 'proceed', 'confirm'
 ];
 
 const EXEMPT_COMMANDS = [
@@ -22,58 +22,16 @@ const EXEMPT_COMMANDS = [
 // ─── Injected DOM script (runs inside Antigravity UI) ────────────────
 function buildInjectionScript() {
   return `(function() {
-    if (window.__AA_OBSERVER_ACTIVE) return 'already-active';
+    if (window.__AA_CLEANUP) { try { window.__AA_CLEANUP(); } catch(e){} }
     window.__AA_OBSERVER_ACTIVE = true;
 
-    var BUTTON_TEXTS = ${JSON.stringify(ACCEPT_KEYWORDS)};
+    var TARGETS = ['always allow', 'allow this conversation', 'allow once', 'allow', 'run', 'accept all', 'accept', 'retry', 'proceed', 'continue'];
     var BLOCKED = ${JSON.stringify(EXEMPT_COMMANDS)};
     var HAS_FILTERS = BLOCKED.length > 0;
+    var SIDEBAR = '[role="tree"],[role="treeitem"],[role="listbox"],[role="option"],[role="menu"],nav,.monaco-list,[class*="conversation-list"],[class*="chat-history"]';
 
-    // Sidebar guard — don't click conversation titles that contain "Run" etc.
-    var AMBIGUOUS = { 'run':1, 'accept':1, 'allow':1, 'retry':1, 'continue':1 };
-    var SIDEBAR_SEL = '[role="tree"],[role="treeitem"],[role="listbox"],[role="option"],.conversation-list,[class*="conversation-list"],[class*="trajectory"],[class*="history"],[class*="chat-history"],[class*="past-chat"],nav,[role="navigation"],[role="menu"]';
-
-    function isSidebar(el) {
-      if (!el || !el.closest) return false;
-      if (el.closest(SIDEBAR_SEL)) return true;
-      var cls = el.className || '';
-      if (typeof cls === 'string' && cls.indexOf('select-none') !== -1 && cls.indexOf('cursor-pointer') !== -1 && cls.indexOf('rounded') !== -1) {
-        return true;
-      }
-      var p = el.parentElement;
-      for (var up = 0; up < 6 && p && p !== document.body; up++) {
-        var pc = p.className || '';
-        var scrollable = (typeof pc === 'string' && (pc.indexOf('overflow-y') !== -1 || pc.indexOf('overflow-auto') !== -1));
-        if (!scrollable) {
-          try { var cs = getComputedStyle(p); scrollable = (cs.overflowY === 'auto' || cs.overflowY === 'scroll'); } catch(e) {}
-        }
-        if (scrollable && p.children.length >= 3) return true;
-        p = p.parentElement;
-      }
-      return false;
-    }
-
-    function getCommandText(el) {
-      var c = el;
-      for (var d = 0; d < 8 && c && c !== document.body; d++) {
-        var codes = c.querySelectorAll('code, pre, .terminal, [data-command]');
-        for (var i = 0; i < codes.length; i++) {
-          var t = (codes[i].innerText || '').trim();
-          if (t) return t;
-        }
-        c = c.parentElement;
-      }
-      return '';
-    }
-
-    function isBlocked(cmdText) {
-      if (!cmdText || !HAS_FILTERS) return false;
-      var lower = cmdText.toLowerCase();
-      for (var i = 0; i < BLOCKED.length; i++) {
-        if (lower.indexOf(BLOCKED[i].toLowerCase()) !== -1) return true;
-      }
-      return false;
-    }
+    var cooldown = new WeakMap();
+    var clickCount = 0;
 
     // Floating badge
     var badge = document.getElementById('aa-badge');
@@ -86,85 +44,153 @@ function buildInjectionScript() {
         e.stopPropagation();
         window.__AA_PAUSED = !window.__AA_PAUSED;
         badge.style.background = window.__AA_PAUSED ? 'rgba(239,68,68,0.95)' : 'rgba(16,185,129,0.95)';
-        badge.innerHTML = window.__AA_PAUSED ? '<span>⏸️</span><span>AutoAccept: PAUSED</span>' : '<span>⚡</span><span>AutoAccept: ON</span>';
+        badge.innerHTML = window.__AA_PAUSED ? '<span>⏸️</span><span>AutoAccept: PAUSED</span>' : '<span>⚡</span><span>AutoAccept: ON (' + clickCount + ')</span>';
       };
       (document.body || document.documentElement).appendChild(badge);
     }
 
-    var COOLDOWN = {};
-    var clickCount = 0;
+    function visible(el) {
+      return !!(el.offsetParent || (el.getClientRects && el.getClientRects().length));
+    }
 
-    function scan() {
-      if (window.__AA_PAUSED) return;
-      var now = Date.now();
-      var els = document.querySelectorAll('button, [role="button"], .monaco-button, a.action-label');
-      for (var i = 0; i < els.length; i++) {
-        var el = els[i];
-        if (el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
-        if (el.offsetParent === null) continue;
+    function labelOf(el) {
+      return (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+    }
 
-        var raw = (el.innerText || el.textContent || '').trim();
-        var text = raw.toLowerCase();
-        if (!text || text.length > 40) continue;
+    function matchTarget(label) {
+      if (!label || label.length > 40) return null;
+      for (var i = 0; i < TARGETS.length; i++) {
+        var t = TARGETS[i];
+        if (label === t || label.indexOf(t + ' ') === 0 || label.indexOf(t + '\\n') === 0) {
+          return t;
+        }
+      }
+      return null;
+    }
 
-        var matched = false;
-        for (var j = 0; j < BUTTON_TEXTS.length; j++) {
-          if (text === BUTTON_TEXTS[j] || text.startsWith(BUTTON_TEXTS[j] + ' ') || text.endsWith(' ' + BUTTON_TEXTS[j])) {
-            matched = true; break;
+    function nearbyCommand(btn) {
+      var el = btn;
+      for (var up = 0; up < 7 && el && el !== document.body; up++, el = el.parentElement) {
+        var blocks = el.querySelectorAll ? el.querySelectorAll('pre, code, [class*="terminal"], [class*="command"]') : [];
+        if (blocks.length) return (blocks[blocks.length - 1].innerText || blocks[blocks.length - 1].textContent || '');
+      }
+      return '';
+    }
+
+    function isBlocked(cmd) {
+      if (!cmd || !HAS_FILTERS) return false;
+      var lower = cmd.toLowerCase();
+      for (var i = 0; i < BLOCKED.length; i++) {
+        if (lower.indexOf(BLOCKED[i].toLowerCase()) !== -1) return true;
+      }
+      return false;
+    }
+
+    function scan(root) {
+      if (window.__AA_PAUSED) return false;
+
+      // 1. Handle Antigravity Permission Modal Dialogs ("Yes, allow this time" + "Submit")
+      var docText = (root.body ? root.body.innerText : (root.textContent || '')).toLowerCase();
+      if (docText.indexOf('yes, allow') !== -1 || docText.indexOf('confirm the command is safe') !== -1) {
+        var submitBtn = null;
+        var allowOption = null;
+        var candidates = root.querySelectorAll('button, [role="button"], div');
+        for (var k = 0; k < candidates.length; k++) {
+          var cEl = candidates[k];
+          var cText = (cEl.innerText || cEl.textContent || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+          if (!allowOption && (cText.indexOf('yes, allow this time') !== -1 || cText.indexOf('yes, and always allow') !== -1)) {
+            allowOption = cEl;
+          }
+          if (cText === 'submit' || cText.indexOf('submit') === 0) {
+            submitBtn = cEl;
           }
         }
-        if (!matched) continue;
+        if (submitBtn) {
+          var lastS = cooldown.get(submitBtn) || 0;
+          if (Date.now() - lastS > 1500) {
+            cooldown.set(submitBtn, Date.now());
+            if (allowOption) {
+              try { allowOption.click(); } catch(e){}
+            }
+            console.log('[AA] Auto-clicking permission Submit button');
+            clickCount++;
+            submitBtn.focus();
+            submitBtn.click();
+            if (badge) {
+              badge.style.transform = 'scale(1.15)';
+              setTimeout(function() { badge.style.transform = ''; }, 200);
+              badge.querySelector('span:last-child').textContent = 'AutoAccept: ON (' + clickCount + ')';
+            }
+            return true;
+          }
+        }
+      }
 
-        // Guard: skip sidebar/list items
-        if (AMBIGUOUS[text] && isSidebar(el)) continue;
+      var nodes = root.querySelectorAll('button, [role="button"], a[role="button"], .monaco-button, [class*="btn"], [class*="button"]');
+      for (var i = 0; i < nodes.length; i++) {
+        var el = nodes[i];
+        if (el.disabled || el.getAttribute('aria-disabled') === 'true' || !visible(el)) continue;
 
-        // Guard: check command exemptions
-        if (HAS_FILTERS) {
-          var cmd = getCommandText(el);
+        // Never click sidebar items
+        if (el.closest && el.closest(SIDEBAR)) continue;
+
+        // Skip chat trajectory accordion rows (like "Execute inspect.js" or "Worked for 10s")
+        var cls = el.className || '';
+        if (typeof cls === 'string' && (cls.indexOf('w-full') !== -1 && cls.indexOf('min-w-0') !== -1)) continue;
+
+        var label = labelOf(el);
+        if (label.indexOf('worked for') !== -1 || label.indexOf('thought for') !== -1 || label.indexOf('individual quota') !== -1) continue;
+
+        var t = matchTarget(label);
+        if (!t) continue;
+
+        var last = cooldown.get(el) || 0;
+        if (Date.now() - last < 3000) continue;
+
+        if (HAS_FILTERS && (t === 'run' || t === 'always allow' || t === 'allow')) {
+          var cmd = nearbyCommand(el);
           if (cmd && isBlocked(cmd)) {
+            cooldown.set(el, Date.now() + 10000);
             console.log('[AA] BLOCKED exempt command:', cmd);
             continue;
           }
         }
 
-        // Cooldown dedup
-        var key = raw + ':' + el.className;
-        if (COOLDOWN[key] && now - COOLDOWN[key] < 5000) continue;
-        COOLDOWN[key] = now;
-
-        console.log('[AA] Clicking:', raw);
-        el.focus();
-        el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-        el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-        el.click();
+        cooldown.set(el, Date.now());
+        console.log('[AA] Auto-clicking:', t, '(' + label + ')');
         clickCount++;
 
-        // Flash badge
+        el.focus();
+        el.click();
+
         if (badge) {
           badge.style.transform = 'scale(1.15)';
           setTimeout(function() { badge.style.transform = ''; }, 200);
           badge.querySelector('span:last-child').textContent = 'AutoAccept: ON (' + clickCount + ')';
         }
+        return true;
       }
+
+      // Shadow DOM support
+      var all = root.querySelectorAll('*');
+      for (var j = 0; j < all.length; j++) {
+        if (all[j].shadowRoot && scan(all[j].shadowRoot)) return true;
+      }
+      return false;
     }
 
-    // MutationObserver for instant reaction
-    window.__AA_OBSERVER = new MutationObserver(function() { scan(); });
-    window.__AA_OBSERVER.observe(document.body || document.documentElement, {
-      childList: true, subtree: true, attributes: true,
-      attributeFilter: ['disabled', 'class', 'style', 'aria-disabled']
-    });
+    var mo = new MutationObserver(function() { scan(document); });
+    mo.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
 
-    // Fallback interval
-    window.__AA_FALLBACK = setInterval(scan, 1500);
+    var tick = setInterval(function() { scan(document); }, 1000);
 
     window.__AA_CLEANUP = function() {
-      if (window.__AA_OBSERVER) { window.__AA_OBSERVER.disconnect(); window.__AA_OBSERVER = null; }
-      if (window.__AA_FALLBACK) { clearInterval(window.__AA_FALLBACK); window.__AA_FALLBACK = null; }
+      mo.disconnect();
+      clearInterval(tick);
       window.__AA_OBSERVER_ACTIVE = false;
     };
 
-    scan();
+    scan(document);
     return 'installed';
   })()`;
 }
@@ -190,6 +216,11 @@ function attachTarget(target) {
       ws.send(JSON.stringify({ id: 1, method: 'Runtime.enable' }));
       ws.send(JSON.stringify({
         id: 2,
+        method: 'Target.setAutoAttach',
+        params: { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }
+      }));
+      ws.send(JSON.stringify({
+        id: 3,
         method: 'Runtime.evaluate',
         params: { expression: buildInjectionScript(), userGesture: true }
       }));
@@ -198,6 +229,15 @@ function attachTarget(target) {
     ws.addEventListener('message', (event) => {
       try {
         const msg = JSON.parse(event.data);
+        if (msg.method === 'Target.attachedToTarget' && msg.params?.sessionId) {
+          console.log(`[AutoAccept] Sub-frame/panel attached in [${id.slice(0, 8)}]`);
+          ws.send(JSON.stringify({
+            id: Date.now(),
+            sessionId: msg.params.sessionId,
+            method: 'Runtime.evaluate',
+            params: { expression: buildInjectionScript(), userGesture: true }
+          }));
+        }
         if (msg.method === 'Runtime.consoleAPICalled') {
           const text = msg.params.args?.map(a => a.value || '').join(' ');
           if (text.includes('[AA]')) {
